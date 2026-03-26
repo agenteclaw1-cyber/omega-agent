@@ -1,1 +1,1 @@
-worker: node axel.js
+web: node axel.js
