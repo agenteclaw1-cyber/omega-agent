@@ -221,3 +221,13 @@ bot.on('polling_error', (err) => console.error('[Axel] Polling error:', err.mess
 
 console.log('\n✅ Axel Bot activo en Telegram');
 console.log('   Buscá @Omegaopenbot en Telegram\n');
+
+// Keep-alive HTTP server para Render
+const http = require('http');
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Omega bot activo');
+}).listen(PORT, () => {
+  console.log(`[Keep-alive] Puerto ${PORT} activo`);
+});
