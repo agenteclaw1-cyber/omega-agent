@@ -1,118 +1,92 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic   = require('@anthropic-ai/sdk').default;
-const http        = require('http');
-const https       = require('https');
+const express     = require('express');
 
 const TOKEN    = process.env.TELEGRAM_TOKEN;
 const OWNER_ID = process.env.OWNER_ID ? parseInt(process.env.OWNER_ID) : null;
 const PORT     = process.env.PORT || 3000;
-const BASE_URL = process.env.RENDER_EXTERNAL_URL || `https://omega-bot-chze.onrender.com`;
+const BASE_URL = process.env.RENDER_EXTERNAL_URL || 'https://omega-bot-chze.onrender.com';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const app       = express();
+app.use(express.json());
 
-// ── Modo: webhook si hay URL pública, polling si no ───────────────────
-let bot;
-if (BASE_URL && BASE_URL.startsWith('https://')) {
-  const WEBHOOK_URL = `${BASE_URL}/bot${TOKEN}`;
-  bot = new TelegramBot(TOKEN, { webHook: { port: PORT } });
-  bot.setWebHook(WEBHOOK_URL).then(() => {
-    console.log(`✅ Omega Bot activo (webhook): ${WEBHOOK_URL}`);
-  });
-} else {
-  bot = new TelegramBot(TOKEN, { polling: true });
-  console.log('✅ Omega Bot activo (polling)');
-}
+// Bot en modo sin polling (webhook manual)
+const bot = new TelegramBot(TOKEN, { polling: false });
+
+// Recibir updates de Telegram via webhook
+app.post(`/bot${TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// Health check
+app.get('/', (req, res) => res.send('Omega activo ✅'));
+
+// Arrancar servidor y registrar webhook
+app.listen(PORT, async () => {
+  console.log(`✅ Servidor en puerto ${PORT}`);
+  try {
+    await bot.setWebHook(`${BASE_URL}/bot${TOKEN}`);
+    console.log(`✅ Webhook registrado: ${BASE_URL}/bot${TOKEN}`);
+  } catch (e) {
+    console.error('Error webhook:', e.message);
+  }
+});
 
 // ── Historial ──────────────────────────────────────────────────────────
 const hist = [];
 const MAX  = 40;
 
-// ── Sistema prompt ─────────────────────────────────────────────────────
 const SYSTEM = `Sos Omega, el asistente personal de Martín. Hablás en español argentino, directo y sin vueltas.
 
-CONTEXTO DEL NEGOCIO:
-Martín tiene un negocio llamado BotFactory que vende bots de WhatsApp con IA a otros negocios.
-
-SERVICIOS ACTIVOS (corriendo 24/7 en la nube):
-- @protesistabot → Bot de ventas de prótesis dentales para Leticia (Railway)
-- BotFactory API → Backend del sistema de bots (Railway)
-- Landing BotFactory → https://steady-kulfi-94e8e2.netlify.app (Netlify)
-- Landing Xiaomi Redmi 15C → https://astounding-sopapillas-3a46b9.netlify.app (Netlify)
+SERVICIOS ACTIVOS 24/7:
+- @protesistabot → Railway (prótesis dentales)
+- BotFactory API → Railway
+- Landing BotFactory → https://steady-kulfi-94e8e2.netlify.app
+- Landing Xiaomi → https://astounding-sopapillas-3a46b9.netlify.app
 
 DATOS CLAVE:
 - WhatsApp Martín: +54 9 11 6532-6683
-- WhatsApp ventas Xiaomi: +54 9 11 5259-2781
-- Protesista bot: @protesistabot — prótesis dentales, seña $100, consulta $500
-- Titular pagos: LETICIA BEATRIZ RODRIGUEZ / Alias: pralong.lemon / Banco Lemon
+- Protesista: seña $100, consulta $500, alias pralong.lemon, titular LETICIA BEATRIZ RODRIGUEZ`;
 
-PERSONALIDAD:
-- Sos directo, útil, sin relleno
-- Ayudás con dudas del negocio, ideas, estrategias, lo que sea
-- Si Martín pregunta algo técnico, explicás claro y corto`;
-
-// ── Responder con IA ───────────────────────────────────────────────────
 async function responder(texto) {
   hist.push({ role: 'user', content: texto });
   if (hist.length > MAX) hist.splice(0, hist.length - MAX);
-
   const res = await anthropic.messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 600,
     system: SYSTEM,
     messages: hist,
   });
-
   const resp = res.content[0].text.trim();
   hist.push({ role: 'assistant', content: resp });
   return resp;
 }
 
-// ── /start ────────────────────────────────────────────────────────────
 bot.onText(/\/start/, async (msg) => {
-  await bot.sendMessage(msg.chat.id,
-    `Hola Martín, soy *Omega* — tu asistente personal.\n\nTodo está corriendo en la nube. ¿En qué te ayudo?`,
-    { parse_mode: 'Markdown' }
-  );
+  await bot.sendMessage(msg.chat.id, 'Hola Martín, soy Omega — tu asistente. ¿En qué te ayudo?');
 });
 
-// ── /status ───────────────────────────────────────────────────────────
 bot.onText(/\/status/, async (msg) => {
   await bot.sendMessage(msg.chat.id,
-    `*Servicios activos 24/7:*\n\n` +
-    `🦷 @protesistabot → Railway ✅\n` +
-    `🏭 BotFactory API → Railway ✅\n` +
-    `🌐 Landing BotFactory → Netlify ✅\n` +
-    `📱 Landing Xiaomi → Netlify ✅\n` +
-    `🤖 Omega Bot → Render ✅`,
-    { parse_mode: 'Markdown' }
+    '🦷 @protesistabot → Railway ✅\n🏭 BotFactory API → Railway ✅\n🌐 Landing BotFactory → Netlify ✅\n📱 Landing Xiaomi → Netlify ✅\n🤖 Omega → Render ✅'
   );
 });
 
-// ── Mensajes normales ──────────────────────────────────────────────────
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const texto  = msg.text;
   if (!texto || texto.startsWith('/')) return;
-
-  if (OWNER_ID && chatId !== OWNER_ID) {
-    return bot.sendMessage(chatId, 'Este asistente es privado.');
-  }
+  if (OWNER_ID && chatId !== OWNER_ID) return bot.sendMessage(chatId, 'Asistente privado.');
 
   await bot.sendChatAction(chatId, 'typing');
-
   try {
-    const respuesta = await responder(texto);
-    if (respuesta.length > 4000) {
-      const partes = respuesta.match(/.{1,4000}/gs) || [respuesta];
-      for (const p of partes) await bot.sendMessage(chatId, p, { parse_mode: 'Markdown' });
-    } else {
-      await bot.sendMessage(chatId, respuesta, { parse_mode: 'Markdown' });
-    }
+    const r = await responder(texto);
+    await bot.sendMessage(chatId, r);
   } catch (err) {
     console.error('[Omega] Error:', err.message);
-    await bot.sendMessage(chatId, 'Tuve un problema. Intentá de nuevo.');
+    await bot.sendMessage(chatId, 'Error al procesar. Intentá de nuevo.');
   }
 });
-
-bot.on('polling_error', (err) => console.error('[Omega] Polling error:', err.message));
