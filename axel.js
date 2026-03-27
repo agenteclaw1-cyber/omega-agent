@@ -2,11 +2,27 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic   = require('@anthropic-ai/sdk').default;
 const http        = require('http');
+const https       = require('https');
 
-const bot       = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+const TOKEN    = process.env.TELEGRAM_TOKEN;
+const OWNER_ID = process.env.OWNER_ID ? parseInt(process.env.OWNER_ID) : null;
+const PORT     = process.env.PORT || 3000;
+const BASE_URL = process.env.RENDER_EXTERNAL_URL || `https://omega-bot-chze.onrender.com`;
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const OWNER_ID = process.env.OWNER_ID ? parseInt(process.env.OWNER_ID) : null;
+// ── Modo: webhook si hay URL pública, polling si no ───────────────────
+let bot;
+if (BASE_URL && BASE_URL.startsWith('https://')) {
+  const WEBHOOK_URL = `${BASE_URL}/bot${TOKEN}`;
+  bot = new TelegramBot(TOKEN, { webHook: { port: PORT } });
+  bot.setWebHook(WEBHOOK_URL).then(() => {
+    console.log(`✅ Omega Bot activo (webhook): ${WEBHOOK_URL}`);
+  });
+} else {
+  bot = new TelegramBot(TOKEN, { polling: true });
+  console.log('✅ Omega Bot activo (polling)');
+}
 
 // ── Historial ──────────────────────────────────────────────────────────
 const hist = [];
@@ -42,7 +58,7 @@ async function responder(texto) {
 
   const res = await anthropic.messages.create({
     model: 'claude-haiku-4-5',
-    max_tokens: 800,
+    max_tokens: 600,
     system: SYSTEM,
     messages: hist,
   });
@@ -67,7 +83,8 @@ bot.onText(/\/status/, async (msg) => {
     `🦷 @protesistabot → Railway ✅\n` +
     `🏭 BotFactory API → Railway ✅\n` +
     `🌐 Landing BotFactory → Netlify ✅\n` +
-    `📱 Landing Xiaomi → Netlify ✅`,
+    `📱 Landing Xiaomi → Netlify ✅\n` +
+    `🤖 Omega Bot → Render ✅`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -99,8 +116,3 @@ bot.on('message', async (msg) => {
 });
 
 bot.on('polling_error', (err) => console.error('[Omega] Polling error:', err.message));
-
-// ── Keep-alive HTTP ───────────────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
-http.createServer((req, res) => { res.writeHead(200); res.end('Omega activo'); })
-  .listen(PORT, () => console.log(`✅ Omega Bot activo | puerto ${PORT}`));
