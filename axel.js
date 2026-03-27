@@ -1,39 +1,37 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const Anthropic   = require('@anthropic-ai/sdk').default;
-const express     = require('express');
+const http        = require('http');
+const https       = require('https');
 
 const TOKEN    = process.env.TELEGRAM_TOKEN;
 const OWNER_ID = process.env.OWNER_ID ? parseInt(process.env.OWNER_ID) : null;
 const PORT     = process.env.PORT || 3000;
-const BASE_URL = process.env.RENDER_EXTERNAL_URL || 'https://omega-bot-chze.onrender.com';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const app       = express();
-app.use(express.json());
 
-// Bot en modo sin polling (webhook manual)
+// Borrar webhook viejo antes de empezar polling
 const bot = new TelegramBot(TOKEN, { polling: false });
-
-// Recibir updates de Telegram via webhook
-app.post(`/bot${TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
+bot.deleteWebHook().then(() => {
+  bot.startPolling();
+  console.log('✅ Omega Bot activo (polling)');
+}).catch(() => {
+  bot.startPolling();
+  console.log('✅ Omega Bot activo (polling)');
 });
 
-// Health check
-app.get('/', (req, res) => res.send('Omega activo ✅'));
-
-// Arrancar servidor y registrar webhook
-app.listen(PORT, async () => {
-  console.log(`✅ Servidor en puerto ${PORT}`);
-  try {
-    await bot.setWebHook(`${BASE_URL}/bot${TOKEN}`);
-    console.log(`✅ Webhook registrado: ${BASE_URL}/bot${TOKEN}`);
-  } catch (e) {
-    console.error('Error webhook:', e.message);
-  }
+// Servidor HTTP keep-alive para que Render no duerma el proceso
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Omega activo');
 });
+server.listen(PORT, () => console.log(`Keep-alive en puerto ${PORT}`));
+
+// Auto-ping cada 10 minutos para no dormir
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || 'https://omega-bot-chze.onrender.com';
+setInterval(() => {
+  https.get(SELF_URL, (r) => {}).on('error', () => {});
+}, 10 * 60 * 1000);
 
 // ── Historial ──────────────────────────────────────────────────────────
 const hist = [];
@@ -66,12 +64,17 @@ async function responder(texto) {
 }
 
 bot.onText(/\/start/, async (msg) => {
-  await bot.sendMessage(msg.chat.id, 'Hola Martín, soy Omega — tu asistente. ¿En qué te ayudo?');
+  await bot.sendMessage(msg.chat.id, 'Hola Martin, soy Omega tu asistente. En que te ayudo?');
 });
 
 bot.onText(/\/status/, async (msg) => {
   await bot.sendMessage(msg.chat.id,
-    '🦷 @protesistabot → Railway ✅\n🏭 BotFactory API → Railway ✅\n🌐 Landing BotFactory → Netlify ✅\n📱 Landing Xiaomi → Netlify ✅\n🤖 Omega → Render ✅'
+    'Servicios activos:\n' +
+    '🦷 @protesistabot Railway OK\n' +
+    '🏭 BotFactory API Railway OK\n' +
+    '🌐 Landing BotFactory Netlify OK\n' +
+    '📱 Landing Xiaomi Netlify OK\n' +
+    '🤖 Omega Render OK'
   );
 });
 
@@ -87,6 +90,8 @@ bot.on('message', async (msg) => {
     await bot.sendMessage(chatId, r);
   } catch (err) {
     console.error('[Omega] Error:', err.message);
-    await bot.sendMessage(chatId, 'Error al procesar. Intentá de nuevo.');
+    await bot.sendMessage(chatId, 'Error: ' + err.message.slice(0, 100));
   }
 });
+
+bot.on('polling_error', (err) => console.error('[Omega] Polling error:', err.message));
